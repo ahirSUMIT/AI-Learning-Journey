@@ -1,0 +1,22 @@
+# Environment variables
+.env
+**/.env
+
+# Python virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Optional: ignore test resumes containing personal data
+# resumes/
