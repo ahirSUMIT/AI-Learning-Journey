@@ -9,11 +9,10 @@ load_dotenv()
 my_api_key=os.getenv("GROQ_API_KEY")
 
 if not my_api_key:
-    raise ValueError("Where is the API KEY")
+    raise ValueError("API key kaha hai bhai")
 
 client=Groq(api_key=my_api_key)
-model = "llama-3.3-70b-versatile"
-REQUEST_DELAY = 2
+model = "openai/gpt-oss-120b"
 
 
 job_description="""
@@ -119,27 +118,15 @@ print(job.education_requirements)
 
 
 #parse real
-class MatchDetails(BaseModel):
-    candidate_name: str | None = None
-    matching_skills: list[str]
-    missing_important_skills: list[str]
-    experience_requirement_met: bool | None = None
-    verdict: str
-
 class MatchResult(BaseModel):
-    score: int = Field(
-        ge=0,
-        le=100,
-        description="Overall match score from 0 to 100"
-    )
-    details: MatchDetails
-    
+    score: float
+    details: dict
 class Experience(BaseModel):
     company: str | None = None
     role: str | None = None
     duration: str | None = None
     description: str | None = None
-    skills_used: list[str] = Field(default_factory=list)  #to define mutable defaults.
+    skills_used: list[str] = []
 
 class Resume(BaseModel):
     name: str | None = None
@@ -159,65 +146,29 @@ resume_schema = Resume.model_json_schema()
 def final_score(job,resume):
     match_schema = MatchResult.model_json_schema()
     prompt = f"""
-    You are an ATS HR recruiter.
+    You are an HR recruiter.
 
-    Compare the following resume with the job description.
+    Compare the candidate's resume with the job description.
 
     JOB DESCRIPTION:
+    {job.model_dump_json(indent=2)}
 
-    {job.model_dump_json()}
-
-    RESUME:
-
-    {resume.model_dump_json()}
-
-    Return exactly ONE valid JSON object matching this schema:
+    CANDIDATE RESUME:
+    {resume.model_dump_json(indent=2)}
+    Return JSON matching this schema:
 
     {match_schema}
 
-    Scoring Rules:
+    Give me:
 
-    1. Score must be an integer between 0 and 100.
+    1. Candidate name
+    2. Matching skills
+    3. Missing important skills
+    4. Whether experience requirement is met
+    5. Overall match percentage from 0 to 100
+    6. A short final verdict
 
-    2. Score ONLY against the requirements present in the job description.
-
-    3. Do NOT give extra marks for unrelated skills.
-
-    4. Do NOT infer skills that are not explicitly mentioned in the resume.
-
-    5. matching_skills must contain ONLY the ACTUAL skill names found in the resume.
-
-    Examples:
-    ✓ Java
-    ✓ Python
-    ✓ C++
-    ✓ Git
-    ✓ SQL
-    ✓ AWS
-
-    Never return requirement sentences such as:
-    ✗ Experience with at least one general-purpose programming language
-    ✗ Experience with data structure implementation
-
-    6. missing_important_skills must contain ONLY required skills from the job description that are absent from the resume.
-
-    7. Ignore unrelated technologies and certifications.
-
-    8. Use exactly the field names defined in the schema.
-
-    9. Never rename keys.
-
-    10. Never create extra keys.
-
-    11. Never omit required keys.
-
-    12. If information is unavailable:
-        - string -> ""
-        - list -> []
-        - bool -> false
-
-    Return ONLY the JSON object.
-    
+    Keep the response concise and easy to read.
     """
     message={
         "role": "user",
@@ -227,33 +178,9 @@ def final_score(job,resume):
     response_format={
         "type": "json_object"
     }
-    response = client.chat.completions.create(model=model, messages=messages, response_format=response_format, temperature=0)
-    print(response.choices[0].message.content)
+    response = client.chat.completions.create(model=model, messages=messages, response_format=response_format)
     data = json.loads(response.choices[0].message.content)
-    details = data["details"]
-
-    if "name" in details:
-        details["candidate_name"] = details.pop("name")
-
-    if "candidate" in details:
-        details["candidate_name"] = details.pop("candidate")
-
-    if "final_verdict" in details:
-        details["verdict"] = details.pop("final_verdict")
-
-    if "experience_met" in details:
-        details["experience_requirement_met"] = details.pop("experience_met")
-
-    if "missing_skills" in details:
-        details["missing_important_skills"] = details.pop("missing_skills")
-    
-    data["details"] = details
-    # Normalize score
-    if isinstance(data.get("score"), float) and data["score"] <= 1:
-        data["score"] = round(data["score"] * 100)
-
     return MatchResult(**data)
-
 def parse_resume(resume_text):
     system_prompt = f"""
     You are an expert resume parser.
@@ -307,32 +234,20 @@ def parse_resume(resume_text):
     response=client.chat.completions.create(model=model, messages=messages, response_format=response_format)
     raw_output = response.choices[0].message.content
     data = json.loads(raw_output)
-    for exp in data.get("experiences", []):
-        if exp.get("skills_used") is None:
-            exp["skills_used"] = []
     resume = Resume(**data)
     return resume
 
 
+from pypdf import PdfReader
 from docx import Document
-import fitz
-
 def read_pdf(file_path):
-    try:
-        doc = fitz.open(file_path)
-
-        text = ""
-
-        for page in doc:
-            text += page.get_text()
-
-        doc.close()
-
-        return text.strip()
-
-    except Exception as e:
-        print(f"❌ Error reading {file_path.name}: {e}")
-        return None
+    reader = PdfReader(file_path)
+    text = ""
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+    return text
 
 def read_docx(file_path):
     document = Document(file_path)
@@ -359,71 +274,35 @@ def read_resume(file_path):
 
 
 
-# lets do it now
+# lets do it here
 resume_folder = Path("resumes")
 all_results=[]
 for file_path in resume_folder.iterdir():
-
+    # "C:\Users\SUMIT RAJ\Projects\AI-Resume-Parser\resumes\README.md"
     if file_path.suffix.lower() not in [".pdf", ".docx"]:
         continue
-
     print("\nProcessing:", file_path.name)
-
     resume_text = read_resume(file_path)
-
-    # Debug: Check extracted text
-    print("=" * 50)
-    print(f"Characters extracted: {len(resume_text) if resume_text else 0}")
-
-    if resume_text:
-        print(resume_text[:300])
-
-    print("=" * 50)
-
-    if not resume_text or len(resume_text.strip()) < 50:
-        print(f"Skipping {file_path.name} (No readable text)")
-        continue
-
-    try:
-        # First LLM call
-        parsed_resume = parse_resume(resume_text)
-        time.sleep(REQUEST_DELAY)
-
-        # Second LLM call
-        result = final_score(job, parsed_resume)
-        time.sleep(REQUEST_DELAY)
-
-    except Exception as e:
-        print(f"❌ LLM failed for {file_path.name}: {e}")
-        continue
+    parsed_resume=parse_resume(resume_text) # llm call1
+    time.sleep(5)
+    result = final_score(job, parsed_resume) #llm caLL2
     #score and details
     #account chatgpt
-    #started sending request to millions
+    # start sending request to millions
     #chattgpt server will jam 
-
-    
+    time.sleep(5)
     print("Score:", result.score)
     all_results.append({
-    "name": parsed_resume.name,
-    "score": result.score,
-    "matching_skills": result.details.matching_skills,
-    "missing_skills": result.details.missing_important_skills,
-    "verdict": result.details.verdict
+        "name": parsed_resume.name,
+        "score": result.score,
+        "details": result.details
     })
-if not all_results:
-    print("❌ No resumes were successfully processed.")
-    exit()
 all_results.sort(
     key=lambda candidate: candidate["score"],
     reverse=True
-    )
-
+)
 top_2 = all_results[:2]
-
-if len(all_results) > 2:
-    worst_2 = all_results[-2:]
-else:
-    worst_2 = []
+worst_2 = all_results[-2:]
 
 
 print("TOP 2 CANDIDATES")
@@ -436,9 +315,7 @@ for candidate in top_2:
         "%"
     )
 
-    print("Matching Skills :", candidate["matching_skills"])
-    print("Missing Skills  :", candidate["missing_skills"])
-    print("Verdict         :", candidate["verdict"])
+    print(candidate["details"])
 
 print("LOWEST 2 CANDIDATES")
 for candidate in worst_2:
@@ -449,6 +326,4 @@ for candidate in worst_2:
         candidate["score"],
         "%"
     )
-    print("Matching Skills :", candidate["matching_skills"])
-    print("Missing Skills  :", candidate["missing_skills"])
-    print("Verdict         :", candidate["verdict"])
+    print(candidate["details"])
