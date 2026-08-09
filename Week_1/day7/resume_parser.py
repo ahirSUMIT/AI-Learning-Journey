@@ -9,7 +9,7 @@ load_dotenv()
 my_api_key=os.getenv("GROQ_API_KEY")
 
 if not my_api_key:
-    raise ValueError("API key kaha hai bhai")
+    raise ValueError("API key Not Found")
 
 client=Groq(api_key=my_api_key)
 model = "openai/gpt-oss-120b"
@@ -278,7 +278,7 @@ def read_resume(file_path):
 resume_folder = Path("resumes")
 all_results=[]
 for file_path in resume_folder.iterdir():
-    # "C:\Users\SUMIT RAJ\Projects\AI-Resume-Parser\resumes\README.md"
+    # "C:\Users\SUMIT RAJ\Learn_Ai\Week_1\resumes\README.md"
     if file_path.suffix.lower() not in [".pdf", ".docx"]:
         continue
     print("\nProcessing:", file_path.name)
@@ -288,8 +288,7 @@ for file_path in resume_folder.iterdir():
     result = final_score(job, parsed_resume) #llm caLL2
     #score and details
     #account chatgpt
-    # start sending request to millions
-    #chattgpt server will jam 
+    
     time.sleep(5)
     print("Score:", result.score)
     all_results.append({
